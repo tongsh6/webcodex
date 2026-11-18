@@ -62,7 +62,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             super::ToolActivityPresentation::Support,
             super::ToolActivityInteraction::NonMeaningful,
         ),
-        "Discover caller-visible Projects with exact client_id/project filters or literal query. Pages default to 30 and clamp to 100 in stable Runtime Project ID order; continue with next_offset. Each page rechecks current visibility, so registry/authorization changes may repeat or omit rows: restart at offset=0 and deduplicate exact IDs. summary_only omits maintenance details; include_git_summary adds cached Git facts. Use resolve_workspace for unique path selection. Exact Runtime IDs and principal-scoped project_ref remain authoritative selectors; refs grant no authority.",
+        "Discover caller-visible Projects with exact client_id/project filters or literal query. Pages default to 30 and clamp to 100 in stable Runtime Project ID order; continue with next_offset. Each page rechecks current visibility, so registry/authorization changes may repeat or omit rows: restart at offset=0 and deduplicate exact IDs. summary_only omits maintenance details; include_git_summary adds cached Git facts. A Project may be a non-Git directory: Git tools then fail, so use shell execution for VCS commands and the available commit operation for commits. Use resolve_workspace for unique path selection. Exact Runtime IDs and principal-scoped project_ref remain authoritative selectors; refs grant no authority.",
     ),
     model_spec(
         control_def(
