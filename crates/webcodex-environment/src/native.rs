@@ -630,6 +630,11 @@ impl NativeEnvironment {
     /// inspected independently; a viewer-only environment has none to inspect.
     pub async fn doctor(&mut self, store: &EnvironmentStore) -> SetupResultValue<SetupResult> {
         let mut result = self.status(store).await?;
+        let address_diagnostics = server_address_diagnostics(store, &result.environment);
+        result
+            .observation
+            .diagnostics
+            .extend(address_diagnostics);
         let record = &result.environment;
         // Reuse the native observations collected by status on its blocking
         // worker. Doctor must not re-query every manager/profile synchronously
@@ -2338,4 +2343,74 @@ fn fleet_from_overview(value: &Value) -> Option<RuntimeFleet> {
         runners,
         projects,
     })
+}
+
+fn normalize_server_address(value: &str) -> String {
+    let trimmed = value.trim().trim_matches('"').trim_end_matches('/');
+    trimmed
+        .strip_prefix("http://")
+        .or_else(|| trimmed.strip_prefix("https://"))
+        .unwrap_or(trimmed)
+        .to_string()
+}
+
+fn keyed_assignment<'a>(text: &'a str, key: &str) -> Option<&'a str> {
+    text.lines().find_map(|line| {
+        let (name, value) = line.trim().split_once('=')?;
+        (name.trim() == key).then(|| value.trim().trim_matches('"'))
+    })
+}
+
+/// Read-only consistency check for the Server address duplicated across the
+/// managed environment files. Divergence after an operator changes the listen
+/// address is a common cause of a stale Tunnel or Runner endpoint, so report it
+/// from `doctor` instead of failing later with an unrelated symptom.
+fn server_address_diagnostics(
+    store: &EnvironmentStore,
+    record: &EnvironmentRecord,
+) -> Vec<SetupDiagnostic> {
+    use std::collections::{BTreeMap, BTreeSet};
+    let root = store.root();
+    let mut values: BTreeMap<String, String> = BTreeMap::new();
+    values.insert(
+        "environment.json".to_string(),
+        normalize_server_address(&record.request.server_url),
+    );
+    if let Ok(text) = std::fs::read_to_string(root.join("runner.toml")) {
+        if let Some(value) = keyed_assignment(&text, "server_url") {
+            values.insert("runner.toml".to_string(), normalize_server_address(value));
+        }
+    }
+    if let Ok(text) = std::fs::read_to_string(root.join("server/webcodex.env")) {
+        if let Some(value) = keyed_assignment(&text, "WEBCODEX_ADDR") {
+            values.insert("server env".to_string(), normalize_server_address(value));
+        }
+    }
+    if let Ok(entries) = std::fs::read_dir(root.join("server/tunnels")) {
+        for entry in entries.flatten() {
+            if let Ok(text) = std::fs::read_to_string(entry.path().join("webcodex.env")) {
+                if let Some(value) = keyed_assignment(&text, "WEBCODEX_ADDR") {
+                    let profile = entry.file_name().to_string_lossy().into_owned();
+                    values.insert(
+                        format!("tunnel profile {profile}"),
+                        normalize_server_address(value),
+                    );
+                }
+            }
+        }
+    }
+    let distinct = values.values().collect::<BTreeSet<_>>();
+    if distinct.len() <= 1 {
+        return Vec::new();
+    }
+    let detail = values
+        .iter()
+        .map(|(name, value)| format!("{name}={value}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    vec![SetupDiagnostic::new(
+        "server_address_mismatch",
+        &format!("Server address differs across environment files: {detail}"),
+        "Update server/webcodex.env, runner.toml, environment.json, setup.json and the Tunnel profile WEBCODEX_ADDR to one address, then restart the Server and Runner",
+    )]
 }
